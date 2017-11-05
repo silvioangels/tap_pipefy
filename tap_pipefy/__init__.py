@@ -20,7 +20,7 @@ BASE_URL = "https://app.pipefy.com/queries"
 # For other brackets use double brackets {{ }}
 
 QUERIES = {
-    "me" : """
+    "me": """
            {{
              me {{
                 id
@@ -159,10 +159,6 @@ def get_organization(organization_id):
         return next(iter(orgs), {})
 
 
-def sync_pipes():
-    pass
-
-
 def test_api_connection():
     LOGGER.info("Testing API connection. Issuing 'me' query")
 
@@ -199,10 +195,13 @@ def load_discovered_schemas(streams):
 # Configure available streams
 
 Stream = collections.namedtuple(
-    "Stream", "tap_stream_id stream primary_keys discovered_schema catalog_schema sync")
+    "Stream",
+    "tap_stream_id stream primary_keys discovered_schema catalog_schema"
+)
 
 STREAMS = [
-    Stream("pipes", "pipes", "id name".split(), {}, {}, sync_pipes)
+    Stream("pipes", "pipes", "id".split(), {}, {}),
+    Stream("pipe_phases", "pipe_phases", "id".split(), {}, {})
 ]
 
 load_discovered_schemas(STREAMS)
@@ -231,28 +230,39 @@ def discover_schemas():
     return {'streams': schemas}
 
 
-def write_catalog_schema(tap_stream_id):
-    stream = next(iter([s for s in STREAMS if s.tap_stream_id == tap_stream_id]), None)
+def get_stream(tap_stream_id):
+    stream = [s for s in STREAMS if s.tap_stream_id == tap_stream_id]
+    return next(iter(stream), None)
 
+
+def write_catalog_schema(stream):
     if stream:
         singer.write_schema(
-            stream.stream,
+            stream.tap_stream_id,
             stream.catalog_schema,
             stream.primary_keys
         )
 
 
 def write_pipes_and_phases(pipes):
-    write_catalog_schema("pipes")
-    write_catalog_schema("pipe_phases")
+    pipes_stream = get_stream("pipes")
+    pipe_phases_stream = get_stream("pipe_phases")
+
+    write_catalog_schema(pipes_stream)
+    write_catalog_schema(pipe_phases_stream)
 
     for pipe in pipes:
         phases = pipe.pop("phases", [])
-        singer.write_record("pipes", pipe)
-        for phase in phases:
-            phase["pipe_id"] = pipe["id"]
-            singer.write_record("pipe_phases", phase)
 
+        with Transformer() as xform:
+            pipe = xform.transform(pipe, pipes_stream.catalog_schema)
+            singer.write_record("pipes", pipe)
+
+            for phase in phases:
+                phase["pipe_id"] = pipe["id"]
+                phase = xform.transform(
+                    phase, pipe_phases_stream.catalog_schema)
+                singer.write_record("pipe_phases", phase)
 
 
 def sync_organization(organization_id):
@@ -266,19 +276,19 @@ def sync_organization(organization_id):
     write_pipes_and_phases(pipes)
 
 
-def do_sync(state, catalog):
-    """ Sync all selected streams
-    """
-    selected_streams = get_selected_streams(STREAMS, catalog)
-    LOGGER.info("Starting Sync for %s",
-                [s.tap_stream_id for s in selected_streams])
+# def do_sync(state, catalog):
+#     """ Sync all selected streams
+#     """
+#     selected_streams = get_selected_streams(STREAMS, catalog)
+#     LOGGER.info("Starting Sync for %s",
+#                 [s.tap_stream_id for s in selected_streams])
 
-    for stream in selected_streams:
-        LOGGER.info("Syncing %s", stream.tap_stream_id)
+#     for stream in selected_streams:
+#         LOGGER.info("Syncing %s", stream.tap_stream_id)
 
-        state = stream.sync(state, stream.tap_stream_id, catalog)
+#         state = stream.sync(state, stream.tap_stream_id, catalog)
 
-    singer.write_state(state)
+#     singer.write_state(state)
 
 
 def do_discover():
@@ -310,10 +320,6 @@ def main_impl():
         sync_organization(CONFIG["organization_id"])
     else:
         LOGGER.info("No catalog was provided")
-
-
-def main():
-    pass
 
 
 def main():
