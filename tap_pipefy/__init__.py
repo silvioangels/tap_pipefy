@@ -21,7 +21,7 @@ BASE_URL = "https://app.pipefy.com/queries"
 
 QUERIES = {
     "me": """
-           {{
+          {{
              me {{
                 id
                 name
@@ -34,6 +34,45 @@ QUERIES = {
               }}
             }}
             """,
+    "cards": """
+             {{
+              cards(pipe_id: {pipe_id}) {{
+                edges {{
+                  node {{
+                    id
+                    title
+                    assignees {{
+                      id
+                    }}
+                    comments {{
+                      text
+                    }}
+                    comments_count
+                    current_phase {{
+                      name
+                    }}
+                    done
+                    due_date
+                    fields {{
+                      name
+                      value
+                    }}
+                    labels {{
+                      name
+                    }}
+                    phases_history {{
+                      phase {{
+                        name
+                      }}
+                      firstTimeIn
+                      lastTimeOut
+                    }}
+                    url
+                  }}
+                }}
+              }}
+             }}
+             """,
     "organizations": """
                     {{
                       organizations(ids: [ {organization_id} ]) {{
@@ -149,6 +188,19 @@ def load_schema(stream):
     return utils.load_json(get_abs_path("schemas/{}.json".format(stream)))
 
 
+def format_date(date):
+    if date:
+        return singer.utils.strftime(pendulum.parse(date).in_timezone("UTC"))
+
+
+def transform_datetimes_hook(data, typ, schema):
+    """ Transform datetime to UTC time zone
+    """
+    if typ in ["string"] and schema.get("format", "") == "date-time":
+        data = format_date(data)
+    return data
+
+
 def get_organization(organization_id):
     params = {"organization_id": organization_id}
     query = get_query("organizations", params)
@@ -157,6 +209,15 @@ def get_organization(organization_id):
     orgs = data.get("organizations", [])
     if orgs:
         return next(iter(orgs), {})
+
+
+def get_cards(pipe_id):
+    params = {"pipe_id": pipe_id}
+    query = get_query("cards", params)
+    resp = request(BASE_URL, query)
+    data = resp.get("data", {})
+    cards = data.get("cards", {})
+    return [card["node"] for card in cards.get("edges", [])]
 
 
 def test_api_connection():
@@ -201,7 +262,8 @@ Stream = collections.namedtuple(
 
 STREAMS = [
     Stream("pipes", "pipes", "id".split(), {}, {}),
-    Stream("pipe_phases", "pipe_phases", "id".split(), {}, {})
+    Stream("pipe_phases", "pipe_phases", "id".split(), {}, {}),
+    Stream("cards", "cards", "id".split(), {}, {})
 ]
 
 load_discovered_schemas(STREAMS)
@@ -244,17 +306,20 @@ def write_catalog_schema(stream):
         )
 
 
-def write_pipes_and_phases(pipes):
+def write_pipes_phases_and_cards(pipes):
     pipes_stream = get_stream("pipes")
     pipe_phases_stream = get_stream("pipe_phases")
+    cards_stream = get_stream("cards")
 
     write_catalog_schema(pipes_stream)
     write_catalog_schema(pipe_phases_stream)
+    write_catalog_schema(cards_stream)
 
     for pipe in pipes:
         phases = pipe.pop("phases", [])
+        cards = get_cards(pipe["id"])
 
-        with Transformer() as xform:
+        with Transformer(pre_hook=transform_datetimes_hook) as xform:
             pipe = xform.transform(pipe, pipes_stream.catalog_schema)
             singer.write_record("pipes", pipe)
 
@@ -263,6 +328,11 @@ def write_pipes_and_phases(pipes):
                 phase = xform.transform(
                     phase, pipe_phases_stream.catalog_schema)
                 singer.write_record("pipe_phases", phase)
+
+            for card in cards:
+                card["pipe_id"] = pipe["id"]
+                card = xform.transform(card, cards_stream.catalog_schema)
+                singer.write_record("cards", card)
 
 
 def sync_organization(organization_id):
@@ -273,7 +343,7 @@ def sync_organization(organization_id):
     pipes = org.pop("pipes", [])
     tables = org.pop("tables", [])
 
-    write_pipes_and_phases(pipes)
+    write_pipes_phases_and_cards(pipes)
 
 
 # def do_sync(state, catalog):
