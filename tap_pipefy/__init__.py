@@ -323,6 +323,7 @@ def get_table_records(table_id, end_cursor=None):
         end_cursor = page_info.get("endCursor", "")
 
         for record in records:
+            record["table_id"] = table_id
             yield process_table_record(record)
 
 
@@ -373,7 +374,8 @@ STREAMS = [
     Stream("pipes", "pipes", "id".split(), {}, {}),
     Stream("pipe_phases", "pipe_phases", "id".split(), {}, {}),
     Stream("cards", "cards", "id".split(), {}, {}),
-    Stream("tables", "tables", "id".split(), {}, {})
+    Stream("tables", "tables", "id".split(), {}, {}),
+    Stream("table_records", "table_records", "id".split(), {}, {})
 ]
 
 load_discovered_schemas(STREAMS)
@@ -454,17 +456,22 @@ def write_pipes_phases_and_cards(pipes):
 
 def write_tables_and_records(tables):
     tables = [tab["node"] for tab in tables.get("edges", [])]
+
     tables_stream = get_stream("tables")
+    table_records_stream = get_stream("table_records")
 
     write_catalog_schema(tables_stream)
+    write_catalog_schema(table_records_stream)
 
     with Transformer(pre_hook=transform_datetimes_hook) as xform:
         for table in tables:
             table = xform.transform(table, tables_stream.catalog_schema)
             singer.write_record("tables", table)
 
-            for record in get_table_records(table["id"]):
-                singer.write_record("table_records", record)
+            for table_record in get_table_records(table["id"]):
+                table_record = xform.transform(
+                    table_record, table_records_stream.catalog_schema)
+                singer.write_record("table_records", table_record)
 
 
 def sync_organization(organization_id):
