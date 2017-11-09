@@ -1,7 +1,9 @@
 {
   "type": [
-    "null",
     "object"
+  ],
+  "required": [
+    "id"
   ],
   "properties": {
     "id": {
@@ -75,6 +77,12 @@
               "null",
               "string"
             ]
+          },
+          "updated_at": {
+            "type": [
+              "string"
+            ],
+            "format": "date-time"
           }
         }
       }

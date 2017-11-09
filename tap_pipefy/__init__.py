@@ -56,6 +56,7 @@ QUERIES = {
                     fields {{
                       name
                       value
+                      updated_at
                     }}
                     labels {{
                       name
@@ -99,6 +100,8 @@ QUERIES = {
                             cards_count
                             fields {{
                                 id
+                                type
+                                required
                             }}
                           }}
                         }}
@@ -107,15 +110,66 @@ QUERIES = {
                             node {{
                               id
                               name
+                              description
+                              icon
+                              authorization
+                              public
+                              public_form
+                              table_records_count
+                              url
                             }}
                           }}
                         }}
                       }}
                     }}
-"""
+                    """,
+    "table_records": """
+                {{
+                  table_records(first: {page_size},
+                                {after}
+                                table_id: "{table_id}") {{
+                    edges {{
+                      cursor
+                      node {{
+                        id
+                        title
+                        url
+                        created_at
+                        updated_at
+                        finished_at
+                        due_date
+                        created_by {{
+                            id
+                        }}
+                        record_fields {{
+                            filled_at
+                            updated_at
+                            required
+                            name
+                            value
+                            field {{
+                                id
+                                type
+                            }}
+                        }}
+
+
+                      }}
+                    }}
+                    pageInfo {{
+                      endCursor
+                      hasNextPage
+                      hasPreviousPage
+                      startCursor
+                    }}
+                  }}
+                }}
+                 """
 }
 
-CONFIG = {}
+CONFIG = {
+    "page_size": 10
+}
 
 STATE = {}
 
@@ -189,12 +243,14 @@ def load_schema(stream):
 
 
 def format_date(date):
+    """ Convert date string to UTC and RFC3339 format
+    """
     if date:
         return singer.utils.strftime(pendulum.parse(date).in_timezone("UTC"))
 
 
 def transform_datetimes_hook(data, typ, schema):
-    """ Transform datetime to UTC time zone
+    """ Transform datetime fields to UTC and RFC3339 format
     """
     if typ in ["string"] and schema.get("format", "") == "date-time":
         data = format_date(data)
@@ -202,6 +258,9 @@ def transform_datetimes_hook(data, typ, schema):
 
 
 def get_organization(organization_id):
+    """ Query API and get info for the organization_id
+        Response includes pipes, phases, tables, members
+    """
     params = {"organization_id": organization_id}
     query = get_query("organizations", params)
     resp = request(BASE_URL, query)
@@ -212,6 +271,8 @@ def get_organization(organization_id):
 
 
 def get_cards(pipe_id):
+    """ Query API and get cards for the pipe_id
+    """
     params = {"pipe_id": pipe_id}
     query = get_query("cards", params)
     resp = request(BASE_URL, query)
@@ -220,7 +281,54 @@ def get_cards(pipe_id):
     return [card["node"] for card in cards.get("edges", [])]
 
 
+def process_table_record(record):
+    record["created_by_id"] = record.pop("created_by", {}).pop("id", None)
+    record_fields = record.pop("record_fields", [])
+
+    for field in record_fields:
+        field_dict = field.pop("field", {})
+        field["id"] = field_dict.get("id", "")
+        field["type"] = field_dict.get("type", "")
+
+    record["record_fields"] = record_fields
+    return record
+
+
+def get_table_records(table_id, end_cursor=None):
+    """ Query API and get table_records for the table_id
+    """
+    has_next_page = True
+
+    while has_next_page:
+        if end_cursor:
+            after = 'after: "{}", '.format(end_cursor)
+        else:
+            after = ""
+
+        params = {
+            "table_id": table_id,
+            "page_size": CONFIG["page_size"],
+            "after": after
+        }
+
+        query = get_query("table_records", params)
+        resp = request(BASE_URL, query)
+        data = resp.get("data", {})
+        table_records = data.get("table_records", {})
+        page_info = table_records.get("pageInfo", {})
+        edges = table_records.get("edges", [])
+        records = [edge["node"] for edge in edges]
+
+        has_next_page = page_info.get("hasNextPage", False)
+        end_cursor = page_info.get("endCursor", "")
+
+        for record in records:
+            yield process_table_record(record)
+
+
 def test_api_connection():
+    """ Send 'me' query to the API to test connection
+    """
     LOGGER.info("Testing API connection. Issuing 'me' query")
 
     query = get_query("me")
@@ -254,6 +362,7 @@ def load_discovered_schemas(streams):
 
 
 # Configure available streams
+# TODO: Convert to class
 
 Stream = collections.namedtuple(
     "Stream",
@@ -263,7 +372,8 @@ Stream = collections.namedtuple(
 STREAMS = [
     Stream("pipes", "pipes", "id".split(), {}, {}),
     Stream("pipe_phases", "pipe_phases", "id".split(), {}, {}),
-    Stream("cards", "cards", "id".split(), {}, {})
+    Stream("cards", "cards", "id".split(), {}, {}),
+    Stream("tables", "tables", "id".split(), {}, {})
 ]
 
 load_discovered_schemas(STREAMS)
@@ -285,7 +395,8 @@ def discover_schemas():
         schema = {
             'tap_stream_id': stream.tap_stream_id,
             'stream': stream.stream,
-            'schema': stream.discovered_schema
+            'schema': stream.discovered_schema,
+            'key_properties': stream.primary_keys
         }
         schemas.append(schema)
 
@@ -293,11 +404,15 @@ def discover_schemas():
 
 
 def get_stream(tap_stream_id):
+    """ Return stream matching the tap_stream_id
+    """
     stream = [s for s in STREAMS if s.tap_stream_id == tap_stream_id]
     return next(iter(stream), None)
 
 
 def write_catalog_schema(stream):
+    """ Output SCHEMA message for the stream
+    """
     if stream:
         singer.write_schema(
             stream.tap_stream_id,
@@ -307,6 +422,8 @@ def write_catalog_schema(stream):
 
 
 def write_pipes_phases_and_cards(pipes):
+    """ Process pipes array and output SCHEMA and RECORD messages
+    """
     pipes_stream = get_stream("pipes")
     pipe_phases_stream = get_stream("pipe_phases")
     cards_stream = get_stream("cards")
@@ -335,8 +452,23 @@ def write_pipes_phases_and_cards(pipes):
                 singer.write_record("cards", card)
 
 
+def write_tables_and_records(tables):
+    tables = [tab["node"] for tab in tables.get("edges", [])]
+    tables_stream = get_stream("tables")
+
+    write_catalog_schema(tables_stream)
+
+    with Transformer(pre_hook=transform_datetimes_hook) as xform:
+        for table in tables:
+            table = xform.transform(table, tables_stream.catalog_schema)
+            singer.write_record("tables", table)
+
+            for record in get_table_records(table["id"]):
+                singer.write_record("table_records", record)
+
+
 def sync_organization(organization_id):
-    """ Get data for an organization.
+    """ Sync data for an organization.
         Data includes pipes + phases and tables
     """
     org = get_organization(organization_id)
@@ -344,6 +476,7 @@ def sync_organization(organization_id):
     tables = org.pop("tables", [])
 
     write_pipes_phases_and_cards(pipes)
+    write_tables_and_records(tables)
 
 
 # def do_sync(state, catalog):
