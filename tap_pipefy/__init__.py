@@ -36,7 +36,9 @@ QUERIES = {
             """,
     "cards": """
              {{
-              cards(pipe_id: {pipe_id}) {{
+              cards(first: {page_size},
+                           {after}
+                           pipe_id: {pipe_id}) {{
                 edges {{
                   node {{
                     id
@@ -71,6 +73,12 @@ QUERIES = {
                     url
                   }}
                 }}
+                pageInfo {{
+                      endCursor
+                      hasNextPage
+                      hasPreviousPage
+                      startCursor
+                    }}
               }}
              }}
              """,
@@ -168,8 +176,6 @@ QUERIES = {
                                 type
                             }}
                         }}
-
-
                       }}
                     }}
                     pageInfo {{
@@ -184,7 +190,7 @@ QUERIES = {
 }
 
 CONFIG = {
-    "page_size": 10
+    "page_size": 2
 }
 
 STATE = {}
@@ -284,15 +290,35 @@ def get_organization(organization_id):
     return data.get("organization", {})
 
 
-def get_cards(pipe_id):
+def get_after(end_cursor):
+    """ Get the "after" portion of the pagination query
+    """
+    return 'after: "{}", '.format(end_cursor) if end_cursor else ""
+
+
+def get_cards(pipe_id, end_cursor=None):
     """ Query API and get cards for the pipe_id
     """
-    params = {"pipe_id": pipe_id}
-    query = get_query("cards", params)
-    resp = request(BASE_URL, query)
-    data = resp.get("data", {})
-    cards = data.get("cards", {})
-    return [card["node"] for card in cards.get("edges", [])]
+    has_next_page = True
+
+    while has_next_page:
+        params = {
+            "pipe_id": pipe_id,
+            "page_size": CONFIG["page_size"],
+            "after": get_after(end_cursor)
+        }
+
+        query = get_query("cards", params)
+        resp = request(BASE_URL, query)
+        data = resp.get("data", {})
+        cards = data.get("cards", {})
+
+        page_info = cards.get("pageInfo", {})
+        has_next_page = page_info.get("hasNextPage", False)
+        end_cursor = page_info.get("endCursor", "")
+
+        for card in cards.get("edges", []):
+            yield card["node"]
 
 
 def process_table_record(record):
@@ -314,31 +340,24 @@ def get_table_records(table_id, end_cursor=None):
     has_next_page = True
 
     while has_next_page:
-        if end_cursor:
-            after = 'after: "{}", '.format(end_cursor)
-        else:
-            after = ""
-
         params = {
             "table_id": table_id,
             "page_size": CONFIG["page_size"],
-            "after": after
+            "after": get_after(end_cursor)
         }
 
         query = get_query("table_records", params)
         resp = request(BASE_URL, query)
         data = resp.get("data", {})
         table_records = data.get("table_records", {})
-        page_info = table_records.get("pageInfo", {})
-        edges = table_records.get("edges", [])
-        records = [edge["node"] for edge in edges]
 
+        page_info = table_records.get("pageInfo", {})
         has_next_page = page_info.get("hasNextPage", False)
         end_cursor = page_info.get("endCursor", "")
 
-        for record in records:
-            record["table_id"] = table_id
-            yield process_table_record(record)
+        for record in table_records.get("edges", []):
+            record["node"]["table_id"] = table_id
+            yield process_table_record(record["node"])
 
 
 def test_api_connection():
@@ -467,7 +486,6 @@ def write_pipes_phases_and_cards(pipes):
 
     for pipe in pipes:
         phases = pipe.pop("phases", [])
-        cards = get_cards(pipe["id"])
 
         with Transformer(pre_hook=transform_datetimes_hook) as xform:
             pipe = xform.transform(pipe, pipes_stream.catalog_schema)
@@ -479,7 +497,7 @@ def write_pipes_phases_and_cards(pipes):
                     phase, pipe_phases_stream.catalog_schema)
                 singer.write_record("pipe_phases", phase)
 
-            for card in cards:
+            for card in get_cards(pipe["id"]):
                 card["pipe_id"] = pipe["id"]
                 card = xform.transform(card, cards_stream.catalog_schema)
                 singer.write_record("cards", card)
