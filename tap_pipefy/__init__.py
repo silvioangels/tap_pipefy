@@ -108,6 +108,9 @@ QUERIES = {
                         pipes(include_publics: true) {{
                           id
                           name
+                          description
+                          icon
+                          created_at
                           phases {{
                             id
                             name
@@ -190,7 +193,7 @@ QUERIES = {
 }
 
 CONFIG = {
-    "page_size": 2
+    "page_size": 5
 }
 
 STATE = {}
@@ -473,29 +476,19 @@ def write_members(members):
             singer.write_record("members", member)
 
 
-def write_pipes_phases_and_cards(pipes):
+def write_pipes_and_cards(pipes):
     """ Process pipes array and output SCHEMA and RECORD messages
     """
     pipes_stream = get_stream("pipes")
-    pipe_phases_stream = get_stream("pipe_phases")
     cards_stream = get_stream("cards")
 
     write_catalog_schema(pipes_stream)
-    write_catalog_schema(pipe_phases_stream)
     write_catalog_schema(cards_stream)
 
     for pipe in pipes:
-        phases = pipe.pop("phases", [])
-
         with Transformer(pre_hook=transform_datetimes_hook) as xform:
             pipe = xform.transform(pipe, pipes_stream.catalog_schema)
             singer.write_record("pipes", pipe)
-
-            for phase in phases:
-                phase["pipe_id"] = pipe["id"]
-                phase = xform.transform(
-                    phase, pipe_phases_stream.catalog_schema)
-                singer.write_record("pipe_phases", phase)
 
             for card in get_cards(pipe["id"]):
                 card["pipe_id"] = pipe["id"]
@@ -533,7 +526,7 @@ def sync_organization(organization_id):
     tables = org.pop("tables", [])
 
     write_members(members)
-    write_pipes_phases_and_cards(pipes)
+    write_pipes_and_cards(pipes)
     write_tables_and_records(tables)
 
 

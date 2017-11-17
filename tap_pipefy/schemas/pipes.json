@@ -1,5 +1,7 @@
 {
-  "type": "object",
+  "type": [
+    "object"
+  ],
   "required": [
     "id",
     "name"
@@ -14,6 +16,87 @@
       "type": [
         "string"
       ]
+    },
+    "description": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "icon": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "created_at": {
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
+    },
+    "phases": {
+      "type": [
+        "array"
+      ],
+      "items": {
+        "type": [
+          "object"
+        ],
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string"
+            ]
+          },
+          "name": {
+            "type": [
+              "string"
+            ]
+          },
+          "cards_count": {
+            "type": [
+              "integer"
+            ]
+          },
+          "fields": {
+            "type": [
+              "array"
+            ],
+            "items": {
+              "type": [
+                "object"
+              ],
+              "required": [
+                "id",
+                "name"
+              ],
+              "properties": {
+                "id": {
+                  "type": [
+                    "string"
+                  ]
+                },
+                "type": {
+                  "type": [
+                    "string"
+                  ]
+                },
+                "required": {
+                  "type": [
+                    "boolean"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
