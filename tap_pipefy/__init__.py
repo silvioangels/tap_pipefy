@@ -192,6 +192,8 @@ QUERIES = {
                  """
 }
 
+MAX_PAGE_SIZE = 50
+
 CONFIG = {
     "page_size": 5
 }
@@ -307,7 +309,7 @@ def get_cards(pipe_id, end_cursor=None):
     while has_next_page:
         params = {
             "pipe_id": pipe_id,
-            "page_size": CONFIG["page_size"],
+            "page_size": max(1, min(CONFIG["page_size"], MAX_PAGE_SIZE)),
             "after": get_after(end_cursor)
         }
 
@@ -345,7 +347,7 @@ def get_table_records(table_id, end_cursor=None):
     while has_next_page:
         params = {
             "table_id": table_id,
-            "page_size": CONFIG["page_size"],
+            "page_size": max(1, min(CONFIG["page_size"], MAX_PAGE_SIZE)),
             "after": get_after(end_cursor)
         }
 
