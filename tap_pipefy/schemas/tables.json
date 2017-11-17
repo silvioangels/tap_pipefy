@@ -1,5 +1,7 @@
 {
-  "type": "object",
+  "type": [
+    "object"
+  ],
   "required": [
     "id",
     "name"
@@ -16,6 +18,12 @@
       ]
     },
     "description": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "icon": {
       "type": [
         "string"
       ]
@@ -35,21 +43,84 @@
         "boolean"
       ]
     },
+    "table_records_count": {
+      "type": [
+        "integer"
+      ]
+    },
     "url": {
       "type": [
         "string"
       ]
     },
-    "icon": {
+    "table_fields": {
       "type": [
-        "null",
-        "string"
-      ]
-    },
-    "table_records_count": {
-      "type": [
-        "integer"
-      ]
+        "array"
+      ],
+      "items": {
+        "type": [
+          "object"
+        ],
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string"
+            ]
+          },
+          "label": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "type": {
+            "type": [
+              "string"
+            ]
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "help": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "is_multiple": {
+            "type": [
+              "boolean"
+            ]
+          },
+          "unique": {
+            "type": [
+              "boolean"
+            ]
+          },
+          "required": {
+            "type": [
+              "boolean"
+            ]
+          },
+          "options": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": [
+                "string"
+              ]
+            }
+          }
+        }
+      }
     }
   }
 }

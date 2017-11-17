@@ -427,11 +427,29 @@ def load_catalog_schemas(catalog):
         stream.catalog_schema.update(catalog_stream.schema.to_dict())
 
 
+def get_dynamic_schemas():
+    return []
+    schemas = []
+    org = get_organization(CONFIG["organization_id"])
+    tables = org.pop("tables", [])
+    tables = [tab["node"] for tab in tables.get("edges", [])]
+
+    for table in tables:
+        schema = {}
+        schema["stream"] = "table_{}".format(table["id"])
+        schema["tap_stream_id"] = schema["stream"]
+        schema["key_properties"] = ["id"]
+        schema["schema"] = {}
+        schemas.append(schema)
+
+    return schemas
+
+
 def discover_schemas():
     """ Generate a list of streams supported by the tap
     """
     schemas = []
-    for stream in STREAMS:
+    for stream in STREAMS:  # Static schenas
         schema = {
             'tap_stream_id': stream.tap_stream_id,
             'stream': stream.stream,
@@ -439,6 +457,7 @@ def discover_schemas():
             'key_properties': stream.primary_keys
         }
         schemas.append(schema)
+        schemas.extend(get_dynamic_schemas())
 
     return {'streams': schemas}
 

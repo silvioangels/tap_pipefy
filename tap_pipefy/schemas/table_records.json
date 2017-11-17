@@ -46,7 +46,8 @@
     },
     "due_date": {
       "type": [
-        "null"
+        "null",
+        "string"
       ],
       "format": "date-time"
     },
