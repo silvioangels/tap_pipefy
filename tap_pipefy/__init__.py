@@ -74,15 +74,21 @@ QUERIES = {
               }}
              }}
              """,
-    "organizations": """
+    "organization": """
                     {{
-                      organizations(ids: [ {organization_id} ]) {{
+                      organization(id: {organization_id} ) {{
                         name
                         created_at
                         members {{
                           user {{
                             id
                             name
+                            email
+                            created_at
+                            avatarUrl
+                            username
+                            timeZone
+                            locale
                           }}
                           role_name
                         }}
@@ -117,6 +123,16 @@ QUERIES = {
                               public_form
                               table_records_count
                               url
+                              table_fields {{
+                                id
+                                label
+                                type
+                                description
+                                is_multiple
+                                unique
+                                required
+                                options
+                                }}
                             }}
                           }}
                         }}
@@ -262,12 +278,10 @@ def get_organization(organization_id):
         Response includes pipes, phases, tables, members
     """
     params = {"organization_id": organization_id}
-    query = get_query("organizations", params)
+    query = get_query("organization", params)
     resp = request(BASE_URL, query)
     data = resp.get("data", None)
-    orgs = data.get("organizations", [])
-    if orgs:
-        return next(iter(orgs), {})
+    return data.get("organization", {})
 
 
 def get_cards(pipe_id):
@@ -328,21 +342,22 @@ def get_table_records(table_id, end_cursor=None):
 
 
 def test_api_connection():
-    """ Send 'me' query to the API to test connection
+    """ Send 'organization' query to the API to test connection
     """
-    LOGGER.info("Testing API connection. Issuing 'me' query")
+    LOGGER.info("Testing API connection. Issuing 'organization' query")
 
-    query = get_query("me")
-    resp_json = request(BASE_URL, query)
-    data = resp_json.get("data", {})
-    errors = resp_json.get("errors", {})
+    org = get_organization(CONFIG["organization_id"])
 
-    if "me" in data:
-        LOGGER.info("API connection successful", data)
+    if org:
+        LOGGER.info("API connection successful")
+        LOGGER.info("organization_id: %s, name: %s",
+                    CONFIG["organization_id"], org["name"])
     else:
-        LOGGER.error("API connection unsuccesful")
-        if errors:
-            LOGGER.error("API returned: %s", errors)
+        LOGGER.critical(
+            "API connection failed. Unable to find data for organization: %s",
+            CONFIG["organization_id"]
+        )
+        sys.exit(-1)
 
 
 def load_discovered_schema(stream):
@@ -371,6 +386,7 @@ Stream = collections.namedtuple(
 )
 
 STREAMS = [
+    Stream("members", "members", "id".split(), {}, {}),
     Stream("pipes", "pipes", "id".split(), {}, {}),
     Stream("pipe_phases", "pipe_phases", "id".split(), {}, {}),
     Stream("cards", "cards", "id".split(), {}, {}),
@@ -421,6 +437,21 @@ def write_catalog_schema(stream):
             stream.catalog_schema,
             stream.primary_keys
         )
+
+
+def write_members(members):
+    """ Process members array and output SCHEMA and RECORD messages
+    """
+    members_stream = get_stream("members")
+    write_catalog_schema(members_stream)
+
+    for member in members:
+        user = member.pop("user")
+        member.update(user)
+
+        with Transformer(pre_hook=transform_datetimes_hook) as xform:
+            member = xform.transform(member, members_stream.catalog_schema)
+            singer.write_record("members", member)
 
 
 def write_pipes_phases_and_cards(pipes):
@@ -479,9 +510,11 @@ def sync_organization(organization_id):
         Data includes pipes + phases and tables
     """
     org = get_organization(organization_id)
+    members = org.pop("members", [])
     pipes = org.pop("pipes", [])
     tables = org.pop("tables", [])
 
+    write_members(members)
     write_pipes_phases_and_cards(pipes)
     write_tables_and_records(tables)
 

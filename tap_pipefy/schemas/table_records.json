@@ -1,13 +1,15 @@
 {
   "type": [
-    "null",
     "object"
+  ],
+  "required": [
+    "id",
+    "table_id"
   ],
   "properties": {
     "id": {
       "type": [
-        "null",
-        "string"
+        "integer"
       ]
     },
     "title": {
@@ -50,7 +52,6 @@
     },
     "table_id": {
       "type": [
-        "null",
         "string"
       ]
     },
