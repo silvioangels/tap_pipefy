@@ -194,6 +194,13 @@ QUERIES = {
 
 MAX_PAGE_SIZE = 50
 
+NUMERIC_TYPES = set("currency number".split())
+INTEGER_TYPES = set("id".split())
+DATE_TYPES = set("date datetime due_date".split())
+STRING_TYPES = set(("cnpj cpf email phone radio_horizontal radio_vertical "
+                    "select short_text statement time").split())
+
+
 CONFIG = {
     "page_size": 5
 }
@@ -429,8 +436,47 @@ def load_catalog_schemas(catalog):
         stream.catalog_schema.update(catalog_stream.schema.to_dict())
 
 
+def get_schema_for_table(table):
+    schema = {"type": "object", "properties": {}, "required": []}
+    table_fields = table.get("table_fields", [])
+
+    record_id_field = {
+        "id": "_record_id",
+        "type": "integer",
+        "required": True,
+        "is_multiple": False
+    }
+
+    table_fields.append(record_id_field)
+
+    for field in table_fields:
+        property_schema = {"inclusion": "automatic"}
+        property_schema['type'] = []
+
+        if field["required"]:
+            schema["required"].append(field["id"])
+        else:
+            property_schema['type'].append("null")
+
+        if field["type"] in (STRING_TYPES | DATE_TYPES) \
+                or field["is_multiple"]:
+            property_schema['type'].append("string")
+
+        if field["type"] in DATE_TYPES:
+            property_schema["format"] = "date-time"
+
+        if field["type"] in NUMERIC_TYPES:
+            property_schema["type"].append("number")
+
+        if field["type"] in INTEGER_TYPES or field["type"] == "integer":
+            property_schema["type"].append("integer")
+
+        schema["properties"][field["id"]] = property_schema
+
+    return schema
+
+
 def get_dynamic_schemas():
-    return []
     schemas = []
     org = get_organization(CONFIG["organization_id"])
     tables = org.pop("tables", [])
@@ -440,8 +486,8 @@ def get_dynamic_schemas():
         schema = {}
         schema["stream"] = "table_{}".format(table["id"])
         schema["tap_stream_id"] = schema["stream"]
-        schema["key_properties"] = ["id"]
-        schema["schema"] = {}
+        schema["key_properties"] = ["_record_id"]
+        schema["schema"] = get_schema_for_table(table)
         schemas.append(schema)
 
     return schemas
