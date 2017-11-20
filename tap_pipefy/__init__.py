@@ -6,11 +6,11 @@ import pendulum
 import requests
 
 import singer
-from singer import utils
+from singer import Schema
 from singer import Transformer
+from singer import utils
 from singer.catalog import Catalog
 from singer.catalog import CatalogEntry
-from singer import Schema
 
 
 REQUIRED_CONFIG_KEYS = ("organization_id personal_access_token").split()
