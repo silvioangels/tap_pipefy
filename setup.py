@@ -3,7 +3,7 @@
 from setuptools import setup
 
 setup(name='tap-pipefy',
-      version='0.0.1',
+      version='0.0.2',
       description='Singer.io tap for extracting data from the Pipefy API',
       author='Pedro Machado',
       classifiers=['Programming Language :: Python :: 3 :: Only'],
@@ -20,9 +20,10 @@ setup(name='tap-pipefy',
       packages=['tap_pipefy'],
       package_data={
           'tap_pipefy/schemas': [
+              'members.json',
               'pipes.json',
-              'pipe_phases.json',
-              'phase_fields.json'
+              'cards.json',
+              'tables.json'
           ],
       },
       include_package_data=True,
