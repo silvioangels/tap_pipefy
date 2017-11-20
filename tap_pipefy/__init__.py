@@ -1,4 +1,3 @@
-import collections
 import json
 import os.path
 import sys
@@ -9,6 +8,10 @@ import requests
 import singer
 from singer import utils
 from singer import Transformer
+from singer.catalog import Catalog
+from singer.catalog import CatalogEntry
+from singer import Schema
+
 
 REQUIRED_CONFIG_KEYS = ("organization_id personal_access_token").split()
 SENSITIVE_CONFIG_KEYS = "personal_access_token".split()  # Won't be logged
@@ -339,6 +342,7 @@ def process_table_record(record):
         field["field"]["id"]: field["value"]
         for field in record_fields
     }
+    output_fields.update({"__id": record["id"]})
     return output_fields
 
 
@@ -364,9 +368,7 @@ def get_table_records(table_id, end_cursor=None):
         end_cursor = page_info.get("endCursor", "")
 
         for record in table_records.get("edges", []):
-            output_fields = process_table_record(record["node"])
-            output_fields["table_id"] = table_id
-            yield output_fields
+            yield process_table_record(record["node"])
 
 
 def test_api_connection():
@@ -391,7 +393,7 @@ def test_api_connection():
 def load_static_schema(stream):
     """ Append 'inclusion': 'automatic' property to all fields in the schema
     """
-    schema = load_schema(stream.stream)
+    schema = load_schema(stream)
     for key in schema['properties']:
         schema['properties'][key]['inclusion'] = 'automatic'
     return schema
@@ -405,33 +407,23 @@ def load_static_schemas(streams):
         stream.discovered_schema.update(load_static_schema(stream))
 
 
-# Configure available streams
-# TODO: Convert to class
+STATIC_STREAMS = "members pipes cards tables".split()
 
-Stream = collections.namedtuple(
-    "Stream",
-    "tap_stream_id stream primary_keys discovered_schema catalog_schema"
-)
-
-STREAMS = [
-    Stream("members", "members", "id".split(), {}, {}),
-    Stream("pipes", "pipes", "id".split(), {}, {}),
-    Stream("cards", "cards", "id".split(), {}, {}),
-    Stream("tables", "tables", "id".split(), {}, {}),
+catalog_entries = [
+    CatalogEntry(
+        tap_stream_id=stream,
+        stream=stream,
+        key_properties=["id"],
+        schema=Schema.from_dict(load_static_schema(stream))
+    ) for stream in STATIC_STREAMS
 ]
 
-load_static_schemas(STREAMS)
-
-LOGGER.info("There are %s static streams", len(STREAMS))
-LOGGER.info("STREAMS: %s", [stream.stream for stream in STREAMS])
+CATALOG = Catalog(catalog_entries)
 
 
-def load_catalog_schemas(catalog):
-    """ Updates STREAMS.catalog_schema with the schema read from the catalog
-    """
-    for stream in STREAMS:
-        catalog_stream = catalog.get_stream(stream.tap_stream_id)
-        stream.catalog_schema.update(catalog_stream.schema.to_dict())
+LOGGER.info("There are %s static streams", len(CATALOG.streams))
+LOGGER.info("STREAMS: %s",
+            [stream.stream for stream in CATALOG.streams])
 
 
 def get_schema_for_table(table):
@@ -475,52 +467,48 @@ def get_schema_for_table(table):
 
         schema["properties"][field["id"]] = property_schema
 
-    return schema
+    return Schema.from_dict(schema)
 
 
-def get_dynamic_schemas():
+def get_dynamic_streams():
     """ Get dynamic table schemas
     """
-    schemas = []
+    entries = []
     org = get_organization(CONFIG["organization_id"])
     tables = org.pop("tables", [])
     tables = [tab["node"] for tab in tables.get("edges", [])]
 
     for table in tables:
-        schema = {}
-        schema["stream"] = "table_{}".format(table["id"])
-        schema["tap_stream_id"] = schema["stream"]
-        schema["key_properties"] = ["__id"]
-        schema["schema"] = get_schema_for_table(table)
-        schemas.append(schema)
+        stream = "table_{}".format(table["id"])
+        entry = CatalogEntry(
+            tap_stream_id=stream,
+            stream=stream,
+            key_properties=["__id"],
+            schema=get_schema_for_table(table)
+        )
+        entries.append(entry)
 
     LOGGER.info("There are %s tables (dynamic schemas)", len(tables))
-    return schemas
+    return entries
 
 
 def discover_schemas():
     """ Generate a list of streams supported by the tap
     """
-    LOGGER.info("discover_schemas")
+    LOGGER.info("Discovering schemas ...")
+
+    CATALOG.streams.extend(get_dynamic_streams())
     schemas = []
-    for stream in STREAMS:  # Static schenas
+    for stream in CATALOG.streams:
         schema = {
             'tap_stream_id': stream.tap_stream_id,
             'stream': stream.stream,
-            'schema': stream.discovered_schema,
-            'key_properties': stream.primary_keys
+            'schema': stream.schema.to_dict(),
+            'key_properties': stream.key_properties
         }
         schemas.append(schema)
-    schemas.extend(get_dynamic_schemas())
 
     return {'streams': schemas}
-
-
-def get_stream(tap_stream_id):
-    """ Return stream matching the tap_stream_id
-    """
-    stream = [s for s in STREAMS if s.tap_stream_id == tap_stream_id]
-    return next(iter(stream), None)
 
 
 def write_catalog_schema(stream):
@@ -529,15 +517,15 @@ def write_catalog_schema(stream):
     if stream:
         singer.write_schema(
             stream.tap_stream_id,
-            stream.catalog_schema,
-            stream.primary_keys
+            stream.schema.to_dict(),
+            stream.key_properties
         )
 
 
 def write_members(members):
     """ Process members array and output SCHEMA and RECORD messages
     """
-    members_stream = get_stream("members")
+    members_stream = CATALOG.get_stream("members")
     write_catalog_schema(members_stream)
 
     for member in members:
@@ -545,49 +533,48 @@ def write_members(members):
         member.update(user)
 
         with Transformer(pre_hook=transform_datetimes_hook) as xform:
-            member = xform.transform(member, members_stream.catalog_schema)
+            member = xform.transform(member, members_stream.schema.to_dict())
             singer.write_record("members", member)
 
 
 def write_pipes_and_cards(pipes):
     """ Process pipes array and output SCHEMA and RECORD messages
     """
-    pipes_stream = get_stream("pipes")
-    cards_stream = get_stream("cards")
+    pipes_stream = CATALOG.get_stream("pipes")
+    cards_stream = CATALOG.get_stream("cards")
 
     write_catalog_schema(pipes_stream)
     write_catalog_schema(cards_stream)
 
     for pipe in pipes:
         with Transformer(pre_hook=transform_datetimes_hook) as xform:
-            pipe = xform.transform(pipe, pipes_stream.catalog_schema)
+            pipe = xform.transform(pipe, pipes_stream.schema.to_dict())
             singer.write_record("pipes", pipe)
 
             for card in get_cards(pipe["id"]):
                 card["pipe_id"] = pipe["id"]
-                card = xform.transform(card, cards_stream.catalog_schema)
+                card = xform.transform(card, cards_stream.schema.to_dict())
                 singer.write_record("cards", card)
 
 
 def write_tables_and_records(tables):
     tables = [tab["node"] for tab in tables.get("edges", [])]
 
-    tables_stream = get_stream("tables")
+    tables_stream = CATALOG.get_stream("tables")
     write_catalog_schema(tables_stream)
 
     with Transformer(pre_hook=transform_datetimes_hook) as xform:
         for table in tables:
-            table = xform.transform(table, tables_stream.catalog_schema)
+            table = xform.transform(table, tables_stream.schema.to_dict())
             singer.write_record("tables", table)
 
-            # table_stream = get_stream("table_{}".format(table["id"]))
-            # write_catalog_schema(table_stream)
+            table_stream = CATALOG.get_stream("table_{}".format(table["id"]))
+            write_catalog_schema(table_stream)
 
-            # for table_record in get_table_records(table["id"]):
-            #     # table_record = xform.transform(
-            #     #     table_record, table_records_stream.catalog_schema)
-            #     stream = "table_{}".format(table["id"])
-            #     singer.write_record(stream, table_record)
+            for table_record in get_table_records(table["id"]):
+                table_record = xform.transform(
+                    table_record, table_stream.schema.to_dict())
+                singer.write_record(table_stream.stream, table_record)
 
 
 def sync_organization(organization_id):
@@ -629,6 +616,7 @@ def do_discover():
 def main_impl():
     """ Main entry point
     """
+    global CATALOG
     args = utils.parse_args(REQUIRED_CONFIG_KEYS)
 
     if args.state:
@@ -641,7 +629,7 @@ def main_impl():
     if args.discover:
         do_discover()
     elif args.catalog:
-        load_catalog_schemas(args.catalog)
+        CATALOG = args.catalog
 
         # do_sync(STATE, args.catalog)
         sync_organization(CONFIG["organization_id"])
