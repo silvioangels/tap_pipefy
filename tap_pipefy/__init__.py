@@ -334,16 +334,12 @@ def get_cards(pipe_id, end_cursor=None):
 
 
 def process_table_record(record):
-    record["created_by_id"] = record.pop("created_by", {}).pop("id", None)
     record_fields = record.pop("record_fields", [])
-
-    for field in record_fields:
-        field_dict = field.pop("field", {})
-        field["id"] = field_dict.get("id", "")
-        field["type"] = field_dict.get("type", "")
-
-    record["record_fields"] = record_fields
-    return record
+    output_fields = {
+        field["field"]["id"]: field["value"]
+        for field in record_fields
+    }
+    return output_fields
 
 
 def get_table_records(table_id, end_cursor=None):
@@ -368,8 +364,9 @@ def get_table_records(table_id, end_cursor=None):
         end_cursor = page_info.get("endCursor", "")
 
         for record in table_records.get("edges", []):
-            record["node"]["table_id"] = table_id
-            yield process_table_record(record["node"])
+            output_fields = process_table_record(record["node"])
+            output_fields["table_id"] = table_id
+            yield output_fields
 
 
 def test_api_connection():
@@ -391,7 +388,7 @@ def test_api_connection():
         sys.exit(-1)
 
 
-def load_discovered_schema(stream):
+def load_static_schema(stream):
     """ Append 'inclusion': 'automatic' property to all fields in the schema
     """
     schema = load_schema(stream.stream)
@@ -400,12 +397,12 @@ def load_discovered_schema(stream):
     return schema
 
 
-def load_discovered_schemas(streams):
+def load_static_schemas(streams):
     """ Load default schemas for all streams
     """
     for stream in streams:
         LOGGER.info('Loading schema for %s', stream.tap_stream_id)
-        stream.discovered_schema.update(load_discovered_schema(stream))
+        stream.discovered_schema.update(load_static_schema(stream))
 
 
 # Configure available streams
@@ -419,13 +416,14 @@ Stream = collections.namedtuple(
 STREAMS = [
     Stream("members", "members", "id".split(), {}, {}),
     Stream("pipes", "pipes", "id".split(), {}, {}),
-    Stream("pipe_phases", "pipe_phases", "id".split(), {}, {}),
     Stream("cards", "cards", "id".split(), {}, {}),
     Stream("tables", "tables", "id".split(), {}, {}),
-    Stream("table_records", "table_records", "id".split(), {}, {})
 ]
 
-load_discovered_schemas(STREAMS)
+load_static_schemas(STREAMS)
+
+LOGGER.info("There are %s static streams", len(STREAMS))
+LOGGER.info("STREAMS: %s", [stream.stream for stream in STREAMS])
 
 
 def load_catalog_schemas(catalog):
@@ -437,11 +435,15 @@ def load_catalog_schemas(catalog):
 
 
 def get_schema_for_table(table):
+    """ Given a table object, output its schema
+    """
     schema = {"type": "object", "properties": {}, "required": []}
     table_fields = table.get("table_fields", [])
 
+    # Add __id (record id) to every table
+
     record_id_field = {
-        "id": "_record_id",
+        "id": "__id",
         "type": "integer",
         "required": True,
         "is_multiple": False
@@ -477,6 +479,8 @@ def get_schema_for_table(table):
 
 
 def get_dynamic_schemas():
+    """ Get dynamic table schemas
+    """
     schemas = []
     org = get_organization(CONFIG["organization_id"])
     tables = org.pop("tables", [])
@@ -486,16 +490,18 @@ def get_dynamic_schemas():
         schema = {}
         schema["stream"] = "table_{}".format(table["id"])
         schema["tap_stream_id"] = schema["stream"]
-        schema["key_properties"] = ["_record_id"]
+        schema["key_properties"] = ["__id"]
         schema["schema"] = get_schema_for_table(table)
         schemas.append(schema)
 
+    LOGGER.info("There are %s tables (dynamic schemas)", len(tables))
     return schemas
 
 
 def discover_schemas():
     """ Generate a list of streams supported by the tap
     """
+    LOGGER.info("discover_schemas")
     schemas = []
     for stream in STREAMS:  # Static schenas
         schema = {
@@ -505,7 +511,7 @@ def discover_schemas():
             'key_properties': stream.primary_keys
         }
         schemas.append(schema)
-        schemas.extend(get_dynamic_schemas())
+    schemas.extend(get_dynamic_schemas())
 
     return {'streams': schemas}
 
@@ -567,20 +573,21 @@ def write_tables_and_records(tables):
     tables = [tab["node"] for tab in tables.get("edges", [])]
 
     tables_stream = get_stream("tables")
-    table_records_stream = get_stream("table_records")
-
     write_catalog_schema(tables_stream)
-    write_catalog_schema(table_records_stream)
 
     with Transformer(pre_hook=transform_datetimes_hook) as xform:
         for table in tables:
             table = xform.transform(table, tables_stream.catalog_schema)
             singer.write_record("tables", table)
 
-            for table_record in get_table_records(table["id"]):
-                table_record = xform.transform(
-                    table_record, table_records_stream.catalog_schema)
-                singer.write_record("table_records", table_record)
+            # table_stream = get_stream("table_{}".format(table["id"]))
+            # write_catalog_schema(table_stream)
+
+            # for table_record in get_table_records(table["id"]):
+            #     # table_record = xform.transform(
+            #     #     table_record, table_records_stream.catalog_schema)
+            #     stream = "table_{}".format(table["id"])
+            #     singer.write_record(stream, table_record)
 
 
 def sync_organization(organization_id):
@@ -633,7 +640,6 @@ def main_impl():
 
     if args.discover:
         do_discover()
-        test_api_connection()
     elif args.catalog:
         load_catalog_schemas(args.catalog)
 
