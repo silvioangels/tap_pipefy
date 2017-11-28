@@ -26,7 +26,7 @@ This tap:
 
 3. Create the config file
 
-    Create a JSON file called `config.json` containing the personal access token you just generated and your organization ID.
+    Create a JSON file called `config.json` containing the personal access token you just generated and your organization ID. You can get your organization ID from the main URL of your Pipefy web application. For example: https://app.pipefy.com/organizations/123456
 
     ```json
     {
