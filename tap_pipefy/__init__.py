@@ -220,6 +220,7 @@ def get_query(key, params=None):
     return QUERIES[key].format(**params)
 
 
+@utils.ratelimit(120, 60)
 def request(url, query):
     """ Issue http POST request to url, return json response and handle errors
     """
