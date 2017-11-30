@@ -9,7 +9,7 @@ This tap:
   - [Tables](http://docs.pipefydatabase.apiary.io/#reference/0/list-tables): This includes all tables, their fields, and the associated table records.
 - Outputs the schema for each resource. The tap will dynamically generate a schema for each of the tables. The `stream` name of each table is `table_<table id>` where `<table id>` is the unique table identifier assigned by Pipefy.
 
-	Although this ID is not needed as an input to the tap, you can find it in the Pipefy user interface by going to the table object and extracting the ID from the URL. For example, the `table_id` is *g3TOB3hc* in the following URL https://app.pipefy.com/database_v2/tables/*g3TOB3hc*-test-table-2
+	Although this ID is not needed as an input to the tap, you can find it in the Pipefy user interface by going to the table object and extracting the ID from the URL. For example, the `table_id` is `g3TOB3hc` in the following URL [https://app.pipefy.com/database_v2/tables/`g3TOB3hc`-test-table-2](https://app.pipefy.com/database_v2/tables/g3TOB3hc-test-table-2)
 - Sync all objects (full replication, incremental sync is not supported)
 
 ## Quick start
