@@ -103,11 +103,6 @@ QUERIES = {
                           }}
                           role_name
                         }}
-                        only_admin_can_create_pipes
-                        only_admin_can_invite_users
-                        automations {{
-                          id
-                        }}
                         pipes(include_publics: true) {{
                           id
                           name
