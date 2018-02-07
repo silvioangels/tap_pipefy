@@ -3,7 +3,7 @@
 from setuptools import setup
 
 setup(name='tap-pipefy',
-      version='0.0.2',
+      version='0.0.3',
       description='Singer.io tap for extracting data from the Pipefy API',
       author='Pedro Machado',
       classifiers=['Programming Language :: Python :: 3 :: Only'],
