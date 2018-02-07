@@ -16,8 +16,11 @@ This tap:
 
 1. Install
 
+This tap requires Python 3. It is recommended that you run it inside it's own virtualenv.
+
     ```bash
-    > pip install tap-pipefy
+    > virtualenv -p python3 tap-pipefy
+    > ./tap-pipefy/pip install tap-pipefy
     ```
 
 2. Get your Pipefy Personal Access Token (API Key)
@@ -40,13 +43,13 @@ This tap:
     Use the discover flag to explore the schema for each of this tap's resources
 
     ```bash
-    > tap-pipefy --config config.json --discover
+    > ./tap-pipefy/bin/tap-pipefy --config config.json --discover
     ```
 
     Pipe the output of this file to a file that will serve as the catalog, where you will select which streams and properties to sync
 
     ```bash
-    > tap-pipefy --config config.json --discover > catalog.json
+    > ./tap-pipefy/bin/tap-pipefy --config config.json --discover > catalog.json
     ```
 
     The catalog is an object with a key streams that has an array of the streams for this tap. For each stream you want to sync, add a `"selected": true` property on the stream object. Below is an example of how you would select to sync the contacts stream. This property is recursive so it will select all children. If you don't want to sync a property, you can add `"selected": false` on that property.
@@ -83,7 +86,7 @@ This tap:
     `tap-pipefy` can be run with:
 
     ```bash
-    tap-pipefy --config config.json --catalog catalog.json
+    ./tap-pipefy/bin/tap-pipefy --config config.json --catalog catalog.json
     ```
 
 ---
