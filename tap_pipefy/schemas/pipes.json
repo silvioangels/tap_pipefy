@@ -97,6 +97,32 @@
           }
         }
       }
+    },
+    "start_form_fields": {
+      "type": [
+        "array"
+      ],
+      "items": {
+        "type": [
+          "object"
+        ],
+        "required": [
+          "id",
+          "label"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string"
+            ]
+          },
+          "label": {
+            "type": [
+              "string"
+            ]
+          }
+        }
+      }
     }
   }
 }

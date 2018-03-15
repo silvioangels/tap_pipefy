@@ -46,11 +46,19 @@ QUERIES = {
                   node {{
                     id
                     title
+                    created_by {{
+                      id
+                    }}
                     assignees {{
                       id
                     }}
                     comments {{
-                      text
+                    id
+                    author {{
+                        id
+                        }}
+                    text
+                    created_at
                     }}
                     comments_count
                     current_phase {{
@@ -58,6 +66,9 @@ QUERIES = {
                     }}
                     done
                     due_date
+                    created_at
+                    updated_at
+                    finished_at
                     fields {{
                       name
                       value
@@ -109,12 +120,19 @@ QUERIES = {
                           description
                           icon
                           created_at
+                          start_form_fields {{
+                              id
+                              label
+                              type
+                              required
+                          }}
                           phases {{
                             id
                             name
                             cards_count
                             fields {{
                                 id
+                                label
                                 type
                                 required
                             }}
@@ -196,7 +214,8 @@ NUMERIC_TYPES = set("currency number".split())
 INTEGER_TYPES = set("id".split())
 DATE_TYPES = set("date datetime due_date".split())
 STRING_TYPES = set(("cnpj cpf email phone radio_horizontal radio_vertical "
-                    "select short_text statement time").split())
+                    "select short_text long_text label_select statement "
+                    " time").split())
 
 
 CONFIG = {
@@ -208,6 +227,11 @@ STATE = {}
 LOGGER = singer.get_logger()
 
 SESSION = requests.session()
+
+
+def save_json_to_file(data, file_name):
+    with open(file_name, "w") as f:
+        json.dump(data, f)
 
 
 def get_query(key, params=None):
@@ -238,6 +262,8 @@ def request(url, query):
 
         if resp:
             resp_json = resp.json()
+            if "errors" in resp_json:
+                LOGGER.error(resp_json)
             return resp_json
 
         if resp.status_code >= 400:
@@ -307,6 +333,12 @@ def get_after(end_cursor):
     return 'after: "{}", '.format(end_cursor) if end_cursor else ""
 
 
+def get_nodes(data):
+    nodes = [item["node"] for item in data.get("edges", [])]
+    for node in nodes:
+        yield node
+
+
 def get_cards(pipe_id, end_cursor=None):
     """ Query API and get cards for the pipe_id
     """
@@ -328,8 +360,8 @@ def get_cards(pipe_id, end_cursor=None):
         has_next_page = page_info.get("hasNextPage", False)
         end_cursor = page_info.get("endCursor", "")
 
-        for card in cards.get("edges", []):
-            yield card["node"]
+        for card in get_nodes(cards):
+            yield card
 
 
 def process_table_record(record):
@@ -403,23 +435,56 @@ def load_static_schemas(streams):
         stream.discovered_schema.update(load_static_schema(stream))
 
 
-STATIC_STREAMS = "members pipes cards tables".split()
+STREAMS = [
+    {"stream": "members", "static": True},
+    {"stream": "pipes", "static": True},
+    {"stream": "cards", "static": False},
+    {"stream": "tables", "static": True}
+]
 
 catalog_entries = [
     CatalogEntry(
-        tap_stream_id=stream,
-        stream=stream,
+        tap_stream_id=stream["stream"],
+        stream=stream["stream"],
         key_properties=["id"],
-        schema=Schema.from_dict(load_static_schema(stream))
-    ) for stream in STATIC_STREAMS
+        schema=Schema.from_dict(load_static_schema(stream["stream"]))
+    ) for stream in STREAMS if stream["static"]
 ]
 
 CATALOG = Catalog(catalog_entries)
+
+LOGGER.info("Catalog is: %s", json.dumps(CATALOG.to_dict(), indent=2))
 
 
 LOGGER.info("There are %s static streams", len(CATALOG.streams))
 LOGGER.info("STREAMS: %s",
             [stream.stream for stream in CATALOG.streams])
+
+
+def append_property_schema(schema, field):
+    property_schema = {"inclusion": "automatic"}
+    property_schema['type'] = []
+
+    if field["required"]:
+        schema["required"].append(field["id"])
+    else:
+        property_schema['type'].append("null")
+
+    if field["type"] in (STRING_TYPES | DATE_TYPES) \
+            or field["is_multiple"]:
+        property_schema['type'].append("string")
+
+    if field["type"] in DATE_TYPES:
+        property_schema["format"] = "date-time"
+
+    if field["type"] in NUMERIC_TYPES:
+        property_schema["type"].append("number")
+
+    if field["type"] in INTEGER_TYPES or field["type"] == "integer":
+        property_schema["type"].append("integer")
+
+    schema["properties"][field["id"]] = property_schema
+    return schema
 
 
 def get_schema_for_table(table):
@@ -440,39 +505,57 @@ def get_schema_for_table(table):
     table_fields.append(record_id_field)
 
     for field in table_fields:
-        property_schema = {"inclusion": "automatic"}
-        property_schema['type'] = []
-
-        if field["required"]:
-            schema["required"].append(field["id"])
-        else:
-            property_schema['type'].append("null")
-
-        if field["type"] in (STRING_TYPES | DATE_TYPES) \
-                or field["is_multiple"]:
-            property_schema['type'].append("string")
-
-        if field["type"] in DATE_TYPES:
-            property_schema["format"] = "date-time"
-
-        if field["type"] in NUMERIC_TYPES:
-            property_schema["type"].append("number")
-
-        if field["type"] in INTEGER_TYPES or field["type"] == "integer":
-            property_schema["type"].append("integer")
-
-        schema["properties"][field["id"]] = property_schema
+        schema = append_property_schema(schema, field)
 
     return Schema.from_dict(schema)
 
 
+def get_schema_for_fields(fields):
+    schema = {"type": "object", "properties": {}, "required": []}
+    for field in fields.values():
+        append_property_schema(schema, field)
+    return schema
+
+
+def combine_schemas(schema1, schema2):
+    properties1 = schema1["properties"]
+    schema2["properties"].update(properties1)
+    return schema2
+
+
 def get_dynamic_streams():
     """ Get dynamic table schemas
+        Append dynamic fields to cards schema
     """
     entries = []
     org = get_organization(CONFIG["organization_id"])
+    pipes = org.pop("pipes", [])
     tables = org.pop("tables", [])
-    tables = [tab["node"] for tab in tables.get("edges", [])]
+    tables = list(get_nodes(tables))
+
+    for pipe in pipes:
+        all_fields = pipe.pop("start_form_fields", [])
+
+        phases = pipe.get("phases", [])
+        for phase in phases:
+            fields = phase.pop("fields", [])
+            for field in fields:
+                all_fields.append(field)
+
+    unique_fields = {field["id"]: field for field in all_fields}
+
+    static_cards_schema = load_static_schema("cards")
+    dynamic_cards_schema = get_schema_for_fields(unique_fields)
+    cards_schema = combine_schemas(static_cards_schema, dynamic_cards_schema)
+
+    cards_entry = CatalogEntry(
+        tap_stream_id="cards",
+        stream="cards",
+        key_properties=["id"],
+        schema=Schema.from_dict(cards_schema)
+    )
+
+    entries.append(cards_entry)
 
     for table in tables:
         stream = "table_{}".format(table["id"])
@@ -533,6 +616,10 @@ def write_members(members):
             singer.write_record("members", member)
 
 
+def get_id_from_object(obj, id_name):
+    return obj.pop(id_name, {}).pop("id", {})
+
+
 def write_pipes_and_cards(pipes):
     """ Process pipes array and output SCHEMA and RECORD messages
     """
@@ -542,13 +629,24 @@ def write_pipes_and_cards(pipes):
     write_catalog_schema(pipes_stream)
     write_catalog_schema(cards_stream)
 
+    save_json_to_file(pipes, "pipes_data.json")
+
     for pipe in pipes:
         with Transformer(pre_hook=transform_datetimes_hook) as xform:
             pipe = xform.transform(pipe, pipes_stream.schema.to_dict())
             singer.write_record("pipes", pipe)
 
+            cards = list(get_cards(pipe["id"]))
+            save_json_to_file(cards, "cards_data.json")
+
             for card in get_cards(pipe["id"]):
                 card["pipe_id"] = pipe["id"]
+                card["created_by"] = get_id_from_object(card, "created_by")
+                comments = card.pop("comments", [])
+                for comment in comments:
+                    comment["author_id"] = get_id_from_object(
+                        comment, "author")
+                card["comments"] = comments
                 card = xform.transform(card, cards_stream.schema.to_dict())
                 singer.write_record("cards", card)
 

@@ -22,6 +22,11 @@
         "string"
       ]
     },
+    "created_by": {
+      "type": [
+        "integer"
+      ]
+    },
     "comments_count": {
       "type": [
         "null",
@@ -55,37 +60,26 @@
       ],
       "format": "date-time"
     },
-    "fields": {
+    "created_at": {
       "type": [
         "null",
-        "array"
+        "string"
       ],
-      "items": {
-        "type": [
-          "null",
-          "object"
-        ],
-        "properties": {
-          "name": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "value": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "updated_at": {
-            "type": [
-              "string"
-            ],
-            "format": "date-time"
-          }
-        }
-      }
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
     },
     "phases_history": {
       "type": [
@@ -186,6 +180,23 @@
           "object"
         ],
         "properties": {
+          "id": {
+            "type": [
+              "integer"
+            ]
+          },
+          "author_id": {
+            "type": [
+              "integer"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
           "text": {
             "type": [
               "null",
