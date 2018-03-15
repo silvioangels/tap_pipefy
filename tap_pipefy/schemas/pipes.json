@@ -87,7 +87,17 @@
                     "string"
                   ]
                 },
+                "label": {
+                  "type": [
+                    "string"
+                  ]
+                },
                 "required": {
+                  "type": [
+                    "boolean"
+                  ]
+                },
+                "is_multiple": {
                   "type": [
                     "boolean"
                   ]
@@ -116,9 +126,24 @@
               "string"
             ]
           },
+          "type": {
+            "type": [
+              "string"
+            ]
+          },
           "label": {
             "type": [
               "string"
+            ]
+          },
+          "required": {
+            "type": [
+              "boolean"
+            ]
+          },
+          "is_multiple": {
+            "type": [
+              "boolean"
             ]
           }
         }

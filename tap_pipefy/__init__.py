@@ -70,6 +70,9 @@ QUERIES = {
                     updated_at
                     finished_at
                     fields {{
+                      field {{
+                        id
+                      }}
                       name
                       value
                       updated_at
@@ -125,6 +128,7 @@ QUERIES = {
                               label
                               type
                               required
+                              is_multiple
                           }}
                           phases {{
                             id
@@ -135,6 +139,7 @@ QUERIES = {
                                 label
                                 type
                                 required
+                                is_multiple
                             }}
                           }}
                         }}
@@ -525,7 +530,7 @@ def combine_schemas(schema1, schema2):
 
 def get_dynamic_streams():
     """ Get dynamic table schemas
-        Append dynamic fields to cards schema
+        Append dynamic fields to static cards schema
     """
     entries = []
     org = get_organization(CONFIG["organization_id"])
@@ -533,8 +538,11 @@ def get_dynamic_streams():
     tables = org.pop("tables", [])
     tables = list(get_nodes(tables))
 
+    all_fields = []
+
     for pipe in pipes:
-        all_fields = pipe.pop("start_form_fields", [])
+        start_form_fields = pipe.pop("start_form_fields", [])
+        all_fields.extend(start_form_fields)
 
         phases = pipe.get("phases", [])
         for phase in phases:
@@ -568,6 +576,8 @@ def get_dynamic_streams():
         entries.append(entry)
 
     LOGGER.info("There are %s tables (dynamic schemas)", len(tables))
+    LOGGER.info("%s fields added to card schema (dynamic schemas)",
+                len(unique_fields))
     return entries
 
 
@@ -620,6 +630,13 @@ def get_id_from_object(obj, id_name):
     return obj.pop(id_name, {}).pop("id", {})
 
 
+def process_field(field):
+    output_field = {
+        field["field"]["id"]: field["value"]
+    }
+    return output_field
+
+
 def write_pipes_and_cards(pipes):
     """ Process pipes array and output SCHEMA and RECORD messages
     """
@@ -647,18 +664,23 @@ def write_pipes_and_cards(pipes):
                     comment["author_id"] = get_id_from_object(
                         comment, "author")
                 card["comments"] = comments
+
+                fields = card.pop("fields", [])
+
+                for field in fields:
+                    fld = process_field(field)
+                    card.update(fld)
+
                 card = xform.transform(card, cards_stream.schema.to_dict())
                 singer.write_record("cards", card)
 
 
 def write_tables_and_records(tables):
-    tables = [tab["node"] for tab in tables.get("edges", [])]
-
     tables_stream = CATALOG.get_stream("tables")
     write_catalog_schema(tables_stream)
 
     with Transformer(pre_hook=transform_datetimes_hook) as xform:
-        for table in tables:
+        for table in get_nodes(tables):
             table = xform.transform(table, tables_stream.schema.to_dict())
             singer.write_record("tables", table)
 
