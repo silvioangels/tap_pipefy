@@ -1,5 +1,6 @@
 import json
 import os.path
+import pathlib
 import sys
 
 import pendulum
@@ -224,7 +225,9 @@ STRING_TYPES = set(("cnpj cpf email phone radio_horizontal radio_vertical "
 
 
 CONFIG = {
-    "page_size": 5
+    "page_size": MAX_PAGE_SIZE,
+    "debug": False,
+    "debug_data_path": "./debug_data"
 }
 
 STATE = {}
@@ -235,8 +238,11 @@ SESSION = requests.session()
 
 
 def save_json_to_file(data, file_name):
-    with open(file_name, "w") as f:
-        json.dump(data, f)
+    if CONFIG.get("debug", False):
+        path = CONFIG["debug_data_path"]
+        pathlib.Path(path).mkdir(parents=True, exist_ok=True)
+        with open(os.path.join(path, file_name), "w") as f:
+            json.dump(data, f)
 
 
 def get_query(key, params=None):
@@ -325,6 +331,7 @@ def get_organization(organization_id):
     """ Query API and get info for the organization_id
         Response includes pipes, phases, tables, members
     """
+    LOGGER.info("Getting data for organization: %s", organization_id)
     params = {"organization_id": organization_id}
     query = get_query("organization", params)
     resp = request(BASE_URL, query)
@@ -344,10 +351,14 @@ def get_nodes(data):
         yield node
 
 
-def get_cards(pipe_id, end_cursor=None):
+def get_cards_for_pipe(pipe_id):
     """ Query API and get cards for the pipe_id
     """
+    LOGGER.info("Retrieving cards for pipe: %s", pipe_id)
     has_next_page = True
+    end_cursor = None
+
+    all_cards = []
 
     while has_next_page:
         params = {
@@ -365,8 +376,13 @@ def get_cards(pipe_id, end_cursor=None):
         has_next_page = page_info.get("hasNextPage", False)
         end_cursor = page_info.get("endCursor", "")
 
+        save_json_to_file(cards, "cards_data_{}.json".format(pipe_id))
+
         for card in get_nodes(cards):
-            yield card
+            all_cards.append(card)
+
+    LOGGER.info("Retrieved %s cards for pipe %s", len(all_cards), pipe_id)
+    return all_cards
 
 
 def process_table_record(record):
@@ -457,10 +473,6 @@ catalog_entries = [
 ]
 
 CATALOG = Catalog(catalog_entries)
-
-LOGGER.info("Catalog is: %s", json.dumps(CATALOG.to_dict(), indent=2))
-
-
 LOGGER.info("There are %s static streams", len(CATALOG.streams))
 LOGGER.info("STREAMS: %s",
             [stream.stream for stream in CATALOG.streams])
@@ -614,6 +626,7 @@ def write_catalog_schema(stream):
 def write_members(members):
     """ Process members array and output SCHEMA and RECORD messages
     """
+    LOGGER.info("Syncing data for %s members", len(members))
     members_stream = CATALOG.get_stream("members")
     write_catalog_schema(members_stream)
 
@@ -627,7 +640,28 @@ def write_members(members):
 
 
 def get_id_from_object(obj, id_name):
-    return obj.pop(id_name, {}).pop("id", {})
+    """ Return the id for id_name element from nested dictionaries
+        given
+        obj = {
+                    "id": "5754718",
+                    "title": "Test card",
+                    "created_by": {
+                      "id": "114933"
+                    }
+                }
+        get_id_from_object(obj, "created_by")
+        returns "114933"
+    """
+    if not isinstance(obj, dict):
+        raise TypeError("Argument is not a dictionary")
+    try:
+        level1 = (obj or {})
+        level2 = level1.pop(id_name, {}) or {}
+        result = level2.pop("id", "")
+        return result
+    except AttributeError as exc:
+        LOGGER.error("obj: %s, id_name: %s", json.dumps(obj), id_name)
+        raise
 
 
 def process_field(field):
@@ -640,6 +674,7 @@ def process_field(field):
 def write_pipes_and_cards(pipes):
     """ Process pipes array and output SCHEMA and RECORD messages
     """
+    LOGGER.info("Syncing data for %s pipes", len(pipes))
     pipes_stream = CATALOG.get_stream("pipes")
     cards_stream = CATALOG.get_stream("cards")
 
@@ -653,10 +688,9 @@ def write_pipes_and_cards(pipes):
             pipe = xform.transform(pipe, pipes_stream.schema.to_dict())
             singer.write_record("pipes", pipe)
 
-            cards = list(get_cards(pipe["id"]))
-            save_json_to_file(cards, "cards_data.json")
+            cards = get_cards_for_pipe(pipe["id"])
 
-            for card in get_cards(pipe["id"]):
+            for card in cards:
                 card["pipe_id"] = pipe["id"]
                 card["created_by"] = get_id_from_object(card, "created_by")
                 comments = card.pop("comments", [])
@@ -679,6 +713,8 @@ def write_tables_and_records(tables):
     tables_stream = CATALOG.get_stream("tables")
     write_catalog_schema(tables_stream)
 
+    save_json_to_file(tables, "tables_data.json")
+
     with Transformer(pre_hook=transform_datetimes_hook) as xform:
         for table in get_nodes(tables):
             table = xform.transform(table, tables_stream.schema.to_dict())
@@ -698,6 +734,9 @@ def sync_organization(organization_id):
         Data includes pipes + phases and tables
     """
     org = get_organization(organization_id)
+    save_json_to_file(
+        org, "organization_data_{}.json".format(organization_id))
+
     members = org.pop("members", [])
     pipes = org.pop("pipes", [])
     tables = org.pop("tables", [])
@@ -705,21 +744,6 @@ def sync_organization(organization_id):
     write_members(members)
     write_pipes_and_cards(pipes)
     write_tables_and_records(tables)
-
-
-# def do_sync(state, catalog):
-#     """ Sync all selected streams
-#     """
-#     selected_streams = get_selected_streams(STREAMS, catalog)
-#     LOGGER.info("Starting Sync for %s",
-#                 [s.tap_stream_id for s in selected_streams])
-
-#     for stream in selected_streams:
-#         LOGGER.info("Syncing %s", stream.tap_stream_id)
-
-#         state = stream.sync(state, stream.tap_stream_id, catalog)
-
-#     singer.write_state(state)
 
 
 def do_discover():

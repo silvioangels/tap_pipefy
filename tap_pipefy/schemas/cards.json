@@ -24,6 +24,7 @@
     },
     "created_by": {
       "type": [
+        "null",
         "integer"
       ]
     },
